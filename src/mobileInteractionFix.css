@@ -1,0 +1,53 @@
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+  button::after {
+    display: none !important;
+    content: none !important;
+  }
+
+  button,
+  a,
+  .route,
+  .nav-btn,
+  .call-btn,
+  .availability,
+  .availability-btn,
+  .metric-card,
+  .job,
+  .detail-row,
+  .upload-dropzone,
+  .technician-bottom-nav a,
+  .technician-bottom-nav a.active {
+    transform: none !important;
+    animation: none !important;
+  }
+
+  button:hover,
+  a:hover,
+  .route:hover,
+  .nav-btn:hover,
+  .call-btn:hover,
+  .availability:hover,
+  .metric-card:hover,
+  .job:hover,
+  .detail-row:hover,
+  .upload-dropzone:hover {
+    transform: none !important;
+  }
+
+  button:active,
+  a:active,
+  .route:active,
+  .nav-btn:active,
+  .call-btn:active,
+  .availability-btn:active,
+  .technician-bottom-nav a:active {
+    transform: none !important;
+    opacity: 0.82;
+    transition-duration: 0.08s !important;
+  }
+
+  .technician-bottom-nav a.active svg,
+  .technician-bottom-nav a.active::before {
+    animation: none !important;
+  }
+}
