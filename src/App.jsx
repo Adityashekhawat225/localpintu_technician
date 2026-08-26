@@ -40,6 +40,8 @@ import {
   FiUploadCloud,
   FiImage,
   FiMenu,
+  FiVolume2,
+  FiVolumeX,
 } from "react-icons/fi";
 import * as client from "./api";
 const tokenKey = "localpintu-technician-token";
@@ -843,6 +845,22 @@ function Shell({ session, setSession, logout }) {
             <h1>{session.technician?.fullName || "Technician"}</h1>
           </div>
           <div className="header-icon-actions">
+            <label className="quick-alert-language" title="Spoken request alert language">
+              <span className="sr-only">Request alert language</span>
+              <select value={alertSettings.language} onChange={(event) => setAlertSettings((current) => ({ ...current, language: event.target.value }))} aria-label="Request alert language">
+                <option value="en-IN">English</option>
+                <option value="hi-IN">हिन्दी</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className={`alert-sound-toggle ${alertSettings.muted ? "is-muted" : ""}`}
+              onClick={() => setAlertSettings((current) => ({ ...current, muted: !current.muted }))}
+              aria-label={alertSettings.muted ? "Unmute booking request sound" : "Mute booking request sound"}
+              title={alertSettings.muted ? "Sound muted — click to unmute" : "Sound on — click to mute"}
+            >
+              {alertSettings.muted ? <FiVolumeX /> : <FiVolume2 />}
+            </button>
             {/* Connection indicator */}
             <span
               className={`connection-dot ${connected === true ? "online" : connected === null ? "connecting" : "offline"}`}

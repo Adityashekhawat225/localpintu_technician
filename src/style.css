@@ -910,6 +910,10 @@ textarea { min-height: 80px; resize: vertical; }
 .alert-preferences .alert-mute-toggle { min-height:44px; display:flex; flex-direction:row; align-items:center; gap:10px; padding:10px 12px; border:1px solid #dbe2ea; border-radius:11px; background:#fff; cursor:pointer; }
 .alert-mute-toggle input { width:18px; height:18px; accent-color:#f97316; }
 @media(max-width:640px){.alert-preferences{grid-template-columns:1fr}}
+.quick-alert-language select { min-height:38px; max-width:82px; padding:0 7px; border:1px solid #dbe2ea; border-radius:10px; color:#334155; background:#fff; font-size:10px; font-weight:800; cursor:pointer; }
+.header-icon-actions .alert-sound-toggle { width:40px; height:40px; display:grid; place-items:center; padding:0; border:1px solid #dbe2ea; border-radius:12px; color:#15803d; background:#fff; font-size:18px; }
+.header-icon-actions .alert-sound-toggle.is-muted { color:#b42335; background:#fff1f2; border-color:#fecdd3; }
+@media(max-width:520px){.quick-alert-language select{max-width:68px;padding:0 4px;font-size:9px}.header-icon-actions .alert-sound-toggle{width:36px;height:36px}}
 
 .document-grid {
   display: grid;
