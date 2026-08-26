@@ -1,0 +1,8 @@
+export const ALERT_SOUND_PRESETS = {
+  "classic-bell": [[760, 0, 0.48], [1050, 0.72, 0.48], [760, 1.44, 0.48], [1050, 2.16, 0.48]],
+  "double-chime": [[660, 0, 0.34], [990, 0.38, 0.5], [660, 1.25, 0.34], [990, 1.63, 0.5]],
+  "urgent-pulse": [[880, 0, 0.22], [880, 0.34, 0.22], [1120, 0.68, 0.32], [880, 1.2, 0.22], [880, 1.54, 0.22], [1120, 1.88, 0.32]],
+  "soft-chime": [[523, 0, 0.6], [659, 0.55, 0.6], [784, 1.1, 0.85]],
+};
+
+export const getAlertPattern = (sound) => ALERT_SOUND_PRESETS[sound] || ALERT_SOUND_PRESETS["classic-bell"];

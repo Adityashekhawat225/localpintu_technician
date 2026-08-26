@@ -45,10 +45,11 @@ import {
 } from "react-icons/fi";
 import * as client from "./api";
 import { clearRequestIfMatching } from "./requestState";
+import { getAlertPattern } from "./alertSounds";
 const tokenKey = "localpintu-technician-token";
 const technicianKey = "localpintu-technician";
 const alertSettingsKey = "localpintu-technician-alert-settings";
-const defaultAlertSettings = { muted: false, language: "en-IN" };
+const defaultAlertSettings = { muted: false, language: "en-IN", sound: "classic-bell" };
 const money = (v) => `\u20B9${Number(v || 0).toLocaleString("en-IN")}`;
 const MAX_JOB_PHOTOS = 8;
 const MAX_JOB_PHOTO_DATA_LENGTH = 12 * 1024 * 1024;
@@ -348,6 +349,10 @@ function Shell({ session, setSession, logout }) {
     alertSettingsRef.current = alertSettings;
     localStorage.setItem(alertSettingsKey, JSON.stringify(alertSettings));
   }, [alertSettings]);
+  useEffect(() => {
+    const assigned = session.technician?.alertPreferences;
+    if (assigned) setAlertSettings((current) => ({ ...current, ...assigned }));
+  }, [session.technician?.alertPreferences?.muted, session.technician?.alertPreferences?.sound, session.technician?.alertPreferences?.language]);
 
   const showNotice = useCallback((msg) => {
     setNotice(msg);
@@ -376,16 +381,16 @@ function Shell({ session, setSession, logout }) {
         audioContextRef.current = ctx;
         if (ctx.state === "suspended") ctx.resume().catch(() => {});
         const start = ctx.currentTime;
-        for (let index = 0; index < 8; index += 1) {
+        getAlertPattern(settings.sound).forEach(([frequency, offset, duration]) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.connect(gain); gain.connect(ctx.destination);
-          osc.frequency.setValueAtTime(index % 2 ? 1050 : 760, start + index * 0.72);
-          gain.gain.setValueAtTime(0.0001, start + index * 0.72);
-          gain.gain.exponentialRampToValueAtTime(0.32, start + index * 0.72 + 0.03);
-          gain.gain.exponentialRampToValueAtTime(0.0001, start + index * 0.72 + 0.48);
-          osc.start(start + index * 0.72); osc.stop(start + index * 0.72 + 0.5);
-        }
+          osc.frequency.setValueAtTime(frequency, start + offset);
+          gain.gain.setValueAtTime(0.0001, start + offset);
+          gain.gain.exponentialRampToValueAtTime(0.32, start + offset + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + duration);
+          osc.start(start + offset); osc.stop(start + offset + duration + 0.02);
+        });
       }
       if ("speechSynthesis" in window) {
         window.speechSynthesis.cancel();
@@ -551,6 +556,11 @@ function Shell({ session, setSession, logout }) {
     socket.on("booking:timeout", handlers["booking:timeout"]);
     socket.on("wallet:update", handlers["wallet:update"]);
     socket.on("notification", handlers["notification"]);
+    socket.on("alert-preferences:update", (preferences) => {
+      setAlertSettings((current) => ({ ...current, ...preferences }));
+      setSession((current) => ({ ...current, technician: { ...current.technician, alertPreferences: preferences } }));
+      showNotice(preferences?.muted ? "Request alerts muted by admin" : "Request alert settings updated by admin");
+    });
 
     return socket;
   }, [session.token]);
@@ -581,6 +591,7 @@ function Shell({ session, setSession, logout }) {
           "booking:timeout",
           "wallet:update",
           "notification",
+          "alert-preferences:update",
         ];
         events.forEach((evt) => socket.off(evt));
         socket.disconnect();
