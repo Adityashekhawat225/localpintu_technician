@@ -44,6 +44,8 @@ import {
 import * as client from "./api";
 const tokenKey = "localpintu-technician-token";
 const technicianKey = "localpintu-technician";
+const alertSettingsKey = "localpintu-technician-alert-settings";
+const defaultAlertSettings = { muted: false, language: "en-IN" };
 const money = (v) => `\u20B9${Number(v || 0).toLocaleString("en-IN")}`;
 const MAX_JOB_PHOTOS = 8;
 const MAX_JOB_PHOTO_DATA_LENGTH = 12 * 1024 * 1024;
@@ -152,6 +154,16 @@ function App() {
     localStorage.removeItem(technicianKey);
     setSession({ token: null, technician: null });
   }, []);
+  useEffect(() => {
+    window.addEventListener("localpintu:technician-session-expired", clear);
+    if (!session.token) return () => window.removeEventListener("localpintu:technician-session-expired", clear);
+    let expiresAt = 0;
+    try { expiresAt = Number(JSON.parse(atob(session.token.split(".")[1])).exp) * 1000; } catch { expiresAt = 0; }
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) clear();
+    const timer = remaining > 0 ? window.setTimeout(clear, Math.min(remaining, 2147483647)) : null;
+    return () => { window.removeEventListener("localpintu:technician-session-expired", clear); if (timer) window.clearTimeout(timer); };
+  }, [clear, session.token]);
   return (
     <Routes>
       <Route
@@ -324,6 +336,15 @@ function Shell({ session, setSession, logout }) {
   const reconnectTimerRef = useRef(null);
   const lastLocationSentRef = useRef(null);
   const audioContextRef = useRef(null);
+  const [alertSettings, setAlertSettings] = useState(() => {
+    try { return { ...defaultAlertSettings, ...JSON.parse(localStorage.getItem(alertSettingsKey) || "{}") }; }
+    catch { return defaultAlertSettings; }
+  });
+  const alertSettingsRef = useRef(alertSettings);
+  useEffect(() => {
+    alertSettingsRef.current = alertSettings;
+    localStorage.setItem(alertSettingsKey, JSON.stringify(alertSettings));
+  }, [alertSettings]);
 
   const showNotice = useCallback((msg) => {
     setNotice(msg);
@@ -344,22 +365,36 @@ function Shell({ session, setSession, logout }) {
   // Play notification sound
   const playNotificationSound = useCallback(() => {
     try {
+      const settings = alertSettingsRef.current;
+      if (settings.muted) return;
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return;
-      const ctx = audioContextRef.current || new AudioContextClass();
-      audioContextRef.current = ctx;
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.setValueAtTime(800, ctx.currentTime);
-      osc.frequency.setValueAtTime(1200, ctx.currentTime + 0.1);
-      osc.frequency.setValueAtTime(800, ctx.currentTime + 0.2);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.4);
+      if (AudioContextClass) {
+        const ctx = audioContextRef.current || new AudioContextClass();
+        audioContextRef.current = ctx;
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        const start = ctx.currentTime;
+        for (let index = 0; index < 8; index += 1) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.setValueAtTime(index % 2 ? 1050 : 760, start + index * 0.72);
+          gain.gain.setValueAtTime(0.0001, start + index * 0.72);
+          gain.gain.exponentialRampToValueAtTime(0.32, start + index * 0.72 + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + index * 0.72 + 0.48);
+          osc.start(start + index * 0.72); osc.stop(start + index * 0.72 + 0.5);
+        }
+      }
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const hindi = settings.language === "hi-IN";
+        const message = new SpeechSynthesisUtterance(hindi
+          ? "Aapke paas nayi service request aayi hai. Kripya request check karke accept karein."
+          : "You have a new service request. Please check and accept the request.");
+        message.lang = settings.language;
+        message.rate = 0.92;
+        message.volume = 1;
+        window.speechSynthesis.speak(message);
+      }
     } catch (e) {
       /* Audio not supported */
     }
@@ -427,7 +462,7 @@ function Shell({ session, setSession, logout }) {
     },
     "booking:request": (data) => {
       setRequest(data);
-      setCountdown(Math.max(0, Math.ceil((new Date(data.expiresAt || Date.now() + 30000).getTime() - Date.now()) / 1000)));
+      setCountdown(Math.max(0, Math.ceil((new Date(data.expiresAt || Date.now() + 120000).getTime() - Date.now()) / 1000)));
       showNotice(
         `New booking request from ${data.customer?.name || "customer"}`,
       );
@@ -901,6 +936,8 @@ function Shell({ session, setSession, logout }) {
               <Profile
                 technician={session.technician}
                 update={(t) => persist(t, setSession)}
+                alertSettings={alertSettings}
+                updateAlertSettings={setAlertSettings}
               />
             }
           />
@@ -1751,7 +1788,7 @@ function Expenses() {
   );
 }
 
-function Profile({ technician, update }) {
+function Profile({ technician, update, alertSettings, updateAlertSettings }) {
   const [form, setForm] = useState(technician || {});
   const [message, setMessage] = useState("");
   useEffect(() => setForm(technician || {}), [technician]);
@@ -1913,6 +1950,21 @@ function Profile({ technician, update }) {
       <button onClick={saveProfile} style={{ marginTop: 14 }}>
         Save profile
       </button>
+
+      <h2 className="section-title">New request alerts</h2>
+      <div className="alert-preferences">
+        <label>
+          Spoken alert language
+          <select value={alertSettings.language} onChange={(event) => updateAlertSettings((current) => ({ ...current, language: event.target.value }))}>
+            <option value="en-IN">English</option>
+            <option value="hi-IN">Hindi</option>
+          </select>
+        </label>
+        <label className="alert-mute-toggle">
+          <input type="checkbox" checked={alertSettings.muted} onChange={(event) => updateAlertSettings((current) => ({ ...current, muted: event.target.checked }))} />
+          <span>{alertSettings.muted ? "Request sound and voice muted" : "Request sound and voice enabled"}</span>
+        </label>
+      </div>
 
       <h2 className="section-title">Documents</h2>
       <div className="document-grid">
@@ -2151,7 +2203,7 @@ function ActiveJob() {
               </p>
               <a
                 className="nav-btn"
-                href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(customerDestination)}`}
+                  href={job.customerLocationLink || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(customerDestination)}`}
                 target="_blank"
                 rel="noreferrer"
               >

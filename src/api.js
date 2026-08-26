@@ -6,8 +6,11 @@ const LIVE_BASE = isLocalHost ? LOCAL_BASE : (import.meta.env.VITE_API_BASE_URL 
 export const api = axios.create({ baseURL: LIVE_BASE, timeout: 15000 });
 api.interceptors.request.use((config) => { const token = localStorage.getItem("localpintu-technician-token"); if (token) config.headers.Authorization = `Bearer ${token}`; return config; });
 api.interceptors.response.use((r) => r, async (e) => {
-  const { config } = e;
-  
+  if (e.response?.status === 401) {
+    localStorage.removeItem("localpintu-technician-token");
+    localStorage.removeItem("localpintu-technician");
+    window.dispatchEvent(new CustomEvent("localpintu:technician-session-expired"));
+  }
   return Promise.reject(new Error(e.response?.data?.message || e.message || "Request failed"));
 });
 export const login = (payload) => api.post("/technicians/login", payload).then((r) => r.data);
