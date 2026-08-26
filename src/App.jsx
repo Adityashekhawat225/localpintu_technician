@@ -1062,12 +1062,12 @@ function Shell({ session, setSession, logout }) {
           <div className="request-premium-actions">
             <button
               className="secondary reject-btn"
-              disabled={responding || countdown === 0}
+              disabled={responding || (countdown === 0 && request.technicianAssignmentStatus !== "Manual")}
               onClick={() => respond("reject")}
             >
               <FiX /> Reject
             </button>
-            <button className="accept-btn" disabled={responding || countdown === 0} onClick={() => respond("accept")}>
+            <button className="accept-btn" disabled={responding || (countdown === 0 && request.technicianAssignmentStatus !== "Manual")} onClick={() => respond("accept")}>
               {responding ? "Please wait…" : "Accept job"}
             </button>
           </div>
