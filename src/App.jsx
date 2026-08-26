@@ -44,6 +44,7 @@ import {
   FiVolumeX,
 } from "react-icons/fi";
 import * as client from "./api";
+import { clearRequestIfMatching } from "./requestState";
 const tokenKey = "localpintu-technician-token";
 const technicianKey = "localpintu-technician";
 const alertSettingsKey = "localpintu-technician-alert-settings";
@@ -474,8 +475,12 @@ function Shell({ session, setSession, logout }) {
       });
       playNotificationSound();
     },
-    "booking:timeout": () => {
-      setRequest(null);
+    "booking:timeout": (data) => {
+      setRequest((current) => {
+        const next = clearRequestIfMatching(current, data?.bookingId);
+        if (!next) setCountdown(30);
+        return next;
+      });
       showNotice("Booking request timed out.");
     },
     "wallet:update": () => {
@@ -715,8 +720,11 @@ function Shell({ session, setSession, logout }) {
         setResponding(true);
         const bookingId = request._id;
         await client.jobAction(bookingId, action);
-        setRequest(null);
-        setCountdown(30);
+        setRequest((current) => {
+          const next = clearRequestIfMatching(current, bookingId);
+          if (!next) setCountdown(30);
+          return next;
+        });
         if (action === "accept") nav(`/job/${bookingId}`);
         // Refresh technician state after response
         const updated = await client.getMe();
