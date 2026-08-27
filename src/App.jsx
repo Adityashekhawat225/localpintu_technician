@@ -44,7 +44,7 @@ import {
   FiVolumeX,
 } from "react-icons/fi";
 import * as client from "./api";
-import { clearRequestIfMatching } from "./requestState";
+import { clearRequestIfMatching, isRequestExpired, requestExpiryTime } from "./requestState";
 import { getAlertPattern } from "./alertSounds";
 const tokenKey = "localpintu-technician-token";
 const technicianKey = "localpintu-technician";
@@ -469,8 +469,10 @@ function Shell({ session, setSession, logout }) {
       setConnected(false);
     },
     "booking:request": (data) => {
-      setRequest(data);
-      setCountdown(Math.max(0, Math.ceil((new Date(data.expiresAt || Date.now() + 120000).getTime() - Date.now()) / 1000)));
+      const requestData = { ...data, uiExpiresAt: data.expiresAt || data.technicianRequestExpiresAt || new Date(Date.now() + 30000).toISOString() };
+      if (isRequestExpired(requestData)) return;
+      setRequest(requestData);
+      setCountdown(Math.max(0, Math.ceil((requestExpiryTime(requestData) - Date.now()) / 1000)));
       showNotice(
         `New booking request from ${data.customer?.name || "customer"}`,
       );
@@ -609,7 +611,7 @@ function Shell({ session, setSession, logout }) {
     const syncRequestedJob = () => client.jobs().then((jobs) => {
       if (!active) return;
       const pending = jobs.find((job) => job.technicianAssignmentStatus === "Requested");
-      if (!pending) return;
+      if (!pending || isRequestExpired(pending)) return;
       setRequest((current) => {
         if (String(current?._id) === String(pending._id)) return current;
         setCountdown(Math.max(0, Math.ceil((new Date(pending.technicianRequestExpiresAt || Date.now() + 30000).getTime() - Date.now()) / 1000)));
@@ -637,8 +639,16 @@ function Shell({ session, setSession, logout }) {
       setCountdown(30);
       return;
     }
-    const expiresAt = new Date(request.expiresAt || request.technicianRequestExpiresAt || Date.now() + 30000).getTime();
-    const updateCountdown = () => setCountdown(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
+    const bookingId = request._id;
+    const expiresAt = requestExpiryTime(request) || Date.now() + 30000;
+    const updateCountdown = () => {
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      setCountdown(remaining);
+      if (remaining === 0) {
+        setRequest((current) => clearRequestIfMatching(current, bookingId));
+        if (countdownRef.current) clearInterval(countdownRef.current);
+      }
+    };
     updateCountdown();
     countdownRef.current = setInterval(() => {
       updateCountdown();
@@ -1062,12 +1072,12 @@ function Shell({ session, setSession, logout }) {
           <div className="request-premium-actions">
             <button
               className="secondary reject-btn"
-              disabled={responding || (countdown === 0 && request.technicianAssignmentStatus !== "Manual")}
+              disabled={responding || countdown === 0}
               onClick={() => respond("reject")}
             >
               <FiX /> Reject
             </button>
-            <button className="accept-btn" disabled={responding || (countdown === 0 && request.technicianAssignmentStatus !== "Manual")} onClick={() => respond("accept")}>
+            <button className="accept-btn" disabled={responding || countdown === 0} onClick={() => respond("accept")}>
               {responding ? "Please wait…" : "Accept job"}
             </button>
           </div>
