@@ -42,17 +42,88 @@ import {
   FiMenu,
   FiVolume2,
   FiVolumeX,
+  FiMessageCircle,
+  FiLifeBuoy,
+  FiZap,
+  FiChevronRight,
+  FiChevronLeft,
+  FiMap,
+  FiArrowRight,
+  FiLock,
+  FiMail,
+  FiShield,
 } from "react-icons/fi";
 import * as client from "./api";
+import JobWork from "./JobWork";
 import { clearRequestIfMatching, isRequestExpired, requestExpiryTime } from "./requestState";
 import { getAlertPattern } from "./alertSounds";
+import "./partnerPlanning.css";
 const tokenKey = "localpintu-technician-token";
 const technicianKey = "localpintu-technician";
 const alertSettingsKey = "localpintu-technician-alert-settings";
 const defaultAlertSettings = { muted: false, language: "en-IN", sound: "classic-bell" };
 const money = (v) => `\u20B9${Number(v || 0).toLocaleString("en-IN")}`;
+const jobValue = (job) => Number(job?.paymentSummary?.payable ?? job?.paymentSummary?.totalAmount ?? job?.servicePlanId?.offerPrice ?? job?.servicePlanId?.price ?? 0);
+const firstName = (name) => String(name || "Customer").trim().split(/\s+/)[0] || "Customer";
+const TechnicianAvatar = ({ src, name }) => {
+  const [imageFailed, setImageFailed] = useState(false);
+  const initial = firstName(name).charAt(0).toUpperCase();
+  return (
+    <span className="technician-avatar" aria-label={`${name || "Partner"} profile photo`}>
+      {src && !imageFailed ? (
+        <img src={src} alt="" onError={() => setImageFailed(true)} />
+      ) : (
+        <span className="technician-avatar-fallback" aria-hidden="true">{initial}</span>
+      )}
+    </span>
+  );
+};
+const distanceKm = (from, to) => {
+  if (!Array.isArray(from) || from.length < 2 || !Number.isFinite(Number(to?.latitude)) || !Number.isFinite(Number(to?.longitude))) return null;
+  const rad = (value) => (Number(value) * Math.PI) / 180;
+  const lat1 = rad(from[1]); const lat2 = rad(to.latitude);
+  const latDelta = lat2 - lat1; const lngDelta = rad(to.longitude) - rad(from[0]);
+  const unit = Math.sin(latDelta / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(lngDelta / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(unit), Math.sqrt(1 - unit));
+};
+const jobDestination = (job) => Number.isFinite(Number(job?.customerLocation?.latitude)) && Number.isFinite(Number(job?.customerLocation?.longitude))
+  ? `${job.customerLocation.latitude},${job.customerLocation.longitude}` : String(job?.customer?.address || "").trim();
+const mapsLink = (job) => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(jobDestination(job))}`;
+const paymentDetails = (job) => {
+  const method = String(job?.paymentMethod || "Cash on Service (COD)").trim() || "Cash on Service (COD)";
+  const paid = job?.paymentStatus === "Paid";
+  const isCod = /cash|cod/i.test(method);
+  return {
+    method,
+    paid,
+    label: paid ? `Already paid · ${method}` : (isCod ? "Cash to collect after service (COD)" : `Payment pending · ${method}`),
+  };
+};
 const MAX_JOB_PHOTOS = 8;
 const MAX_JOB_PHOTO_DATA_LENGTH = 12 * 1024 * 1024;
+const readDocumentImage = (file) => new Promise((resolve, reject) => {
+  if (!file?.type?.startsWith("image/")) return reject(new Error("Please choose a JPG, PNG or WebP image."));
+  const reader = new FileReader();
+  reader.onerror = () => reject(new Error("This document could not be read."));
+  reader.onload = () => {
+    const image = new Image();
+    image.onerror = () => reject(new Error("This document image could not be opened."));
+    image.onload = () => {
+      const limit = 1800;
+      const scale = Math.min(1, limit / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.88));
+    };
+    image.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
 const readJobPhotos = async (files) => {
   const selected = [...(files || [])];
   if (!selected.length) return [];
@@ -145,18 +216,23 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 
 function App() {
   const [session, setSession] = useState(() => ({
-    token: localStorage.getItem(tokenKey),
+    token: sessionStorage.getItem(tokenKey),
     technician: JSON.parse(localStorage.getItem(technicianKey) || "null"),
   }));
   const login = (data) => {
-    localStorage.setItem(tokenKey, data.token);
+    sessionStorage.setItem(tokenKey, data.token);
     persist(data.technician, setSession);
     setSession({ token: data.token, technician: data.technician });
   };
   const clear = useCallback(() => {
-    localStorage.removeItem(tokenKey);
+    sessionStorage.removeItem(tokenKey);
     localStorage.removeItem(technicianKey);
     setSession({ token: null, technician: null });
+  }, []);
+  useEffect(() => {
+    // Tokens saved by older builds were persistent. Remove that legacy copy
+    // so closing the browser tab ends the technician session.
+    localStorage.removeItem(tokenKey);
   }, []);
   useEffect(() => {
     window.addEventListener("localpintu:technician-session-expired", clear);
@@ -180,8 +256,8 @@ function App() {
           )
         }
       />
-      <Route path="/forgot-password" element={<Forgot />} />
-      <Route path="/reset-password/:token" element={<Reset />} />
+      
+      
       <Route
         path="/*"
         element={
@@ -196,6 +272,28 @@ function App() {
   );
 }
 
+function AuthFrame({ eyebrow, title, subtitle, children }) {
+  return (
+    <main className="login auth-experience auth-experience--form-only">
+      <section className="auth-form-side">
+        <div className="auth-card-shell">
+          <div className="auth-mobile-brand">
+            <img src="/localpintu-logo-orange.webp" alt="LocalPintu" />
+            <div><strong>LOCALPINTU</strong><small>PARTNER</small></div>
+          </div>
+          <header className="auth-card-heading">
+            <span>{eyebrow}</span>
+            <h1>{title}</h1>
+            {subtitle && <p>{subtitle}</p>}
+          </header>
+          {children}
+          <footer><FiShield /> Protected partner access</footer>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function Login({ onLogin }) {
   const [form, setForm] = useState({ emailOrMobile: "", password: "" });
   const [error, setError] = useState("");
@@ -205,7 +303,7 @@ function Login({ onLogin }) {
     setError("");
     setSubmitting(true);
     try {
-      const result = await client.login(form);
+      const result = await client.login({ ...form });
       toast.success("Login successful");
       onLogin(result);
     } catch (x) {
@@ -215,105 +313,45 @@ function Login({ onLogin }) {
       setError(message);
       toast.error(message);
     } finally {
+      // Never keep a submitted password in component state after a request.
+      setForm((current) => ({ ...current, password: "" }));
       setSubmitting(false);
     }
   };
   return (
-    <main className="login">
-      <form onSubmit={submit}>
-        <div className="brand">
-          LOCAL<span>PINTU</span>
-          <small>TECHNICIAN PORTAL</small>
-        </div>
-        <h1>Welcome back</h1>
+    <AuthFrame eyebrow="PARTNER PORTAL" title="Welcome back" subtitle="Sign in to manage your jobs and earnings.">
+      <form className="auth-form auth-form--login" onSubmit={submit}>
         {error && <div className="error">{error}</div>}
-        <label>
-          Email or mobile
-          <input
+        <label className="auth-login-field">
+          <span>Email or mobile</span>
+          <div><FiMail aria-hidden="true" /><input
             required
+            autoComplete="username"
+            placeholder="Enter email or mobile number"
             value={form.emailOrMobile}
             onChange={(e) =>
               setForm({ ...form, emailOrMobile: e.target.value })
             }
-          />
+          /></div>
         </label>
-        <label>
-          Password
-          <input
+        <label className="auth-login-field">
+          <span>Password</span>
+          <div><FiLock aria-hidden="true" /><input
             type="password"
             required
+            autoComplete="current-password"
+            placeholder="Enter your password"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
-          />
+          /></div>
         </label>
         <button disabled={submitting}>{submitting ? "Signing in…" : "Sign in"}</button>
-        <NavLink to="/forgot-password">Forgot password?</NavLink>
+        <button type="submit" disabled={submitting}>
+          {submitting ? "Signing in..." : <>Sign in to workspace <FiArrowRight aria-hidden="true" /></>}
+        </button>
+        
       </form>
-    </main>
-  );
-}
-
-function Forgot() {
-  const [emailOrMobile, setValue] = useState("");
-  const [message, setMessage] = useState("");
-  return (
-    <main className="login">
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const result = await client.forgotPassword({ emailOrMobile });
-          setMessage(
-            result.resetToken
-              ? `Development reset token: ${result.resetToken}`
-              : result.message,
-          );
-        }}
-      >
-        <h1>Reset password</h1>
-        <label>
-          Email or mobile
-          <input
-            required
-            value={emailOrMobile}
-            onChange={(e) => setValue(e.target.value)}
-          />
-        </label>
-        <button>Request reset</button>
-        {message && <p>{message}</p>}
-        <NavLink to="/login">Back to sign in</NavLink>
-      </form>
-    </main>
-  );
-}
-
-function Reset() {
-  const { token } = useParams();
-  const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
-  return (
-    <main className="login">
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const result = await client.resetPassword(token, password);
-          setMessage(result.message);
-        }}
-      >
-        <h1>Choose a password</h1>
-        <label>
-          New password
-          <input
-            required
-            minLength="8"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        <button>Save password</button>
-        {message && <p>{message}</p>}
-      </form>
-    </main>
+    </AuthFrame>
   );
 }
 
@@ -339,6 +377,7 @@ function Shell({ session, setSession, logout }) {
   const noticeTimerRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const lastLocationSentRef = useRef(null);
+  const availabilityChangeRef = useRef(false);
   const audioContextRef = useRef(null);
   const [alertSettings, setAlertSettings] = useState(() => {
     try { return { ...defaultAlertSettings, ...JSON.parse(localStorage.getItem(alertSettingsKey) || "{}") }; }
@@ -353,6 +392,14 @@ function Shell({ session, setSession, logout }) {
     const assigned = session.technician?.alertPreferences;
     if (assigned) setAlertSettings((current) => ({ ...current, ...assigned }));
   }, [session.technician?.alertPreferences?.muted, session.technician?.alertPreferences?.sound, session.technician?.alertPreferences?.language]);
+  const saveAlertSettings = useCallback((changes) => {
+    const next = { ...alertSettingsRef.current, ...changes };
+    alertSettingsRef.current = next;
+    setAlertSettings(next);
+    client.updateMe({ alertPreferences: next })
+      .then((technician) => setSession((current) => ({ ...current, technician })))
+      .catch((error) => toast.error(error.message || "Could not save alert settings"));
+  }, []);
 
   const showNotice = useCallback((msg) => {
     setNotice(msg);
@@ -371,10 +418,10 @@ function Shell({ session, setSession, logout }) {
   }, []);
 
   // Play notification sound
-  const playNotificationSound = useCallback(() => {
+  const playNotificationSound = useCallback((options = {}) => {
     try {
       const settings = alertSettingsRef.current;
-      if (settings.muted) return;
+      if (settings.muted && !options.force) return;
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (AudioContextClass) {
         const ctx = audioContextRef.current || new AudioContextClass();
@@ -392,13 +439,16 @@ function Shell({ session, setSession, logout }) {
           osc.start(start + offset); osc.stop(start + offset + duration + 0.02);
         });
       }
-      if ("speechSynthesis" in window) {
+      if (options.voice !== false && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
         const hindi = settings.language === "hi-IN";
+        const hinglish = settings.language === "hi-Latn";
         const message = new SpeechSynthesisUtterance(hindi
-          ? "Aapke paas nayi service request aayi hai. Kripya request check karke accept karein."
-          : "You have a new service request. Please check and accept the request.");
-        message.lang = settings.language;
+          ? "आपके पास नई सर्विस रिक्वेस्ट आई है। कृपया रिक्वेस्ट चेक करके स्वीकार करें।"
+          : hinglish
+            ? "Aapke paas new service request aayi hai. Please check karke accept karein."
+            : "You have a new service request. Please check and accept the request.");
+        message.lang = hinglish ? "en-IN" : settings.language;
         message.rate = 0.92;
         message.volume = 1;
         window.speechSynthesis.speak(message);
@@ -534,7 +584,7 @@ function Shell({ session, setSession, logout }) {
 
     const localPanel = ["localhost", "127.0.0.1"].includes(window.location.hostname);
     const socket = io(
-      localPanel ? "http://localhost:8000" : (import.meta.env.VITE_SOCKET_URL || "https://localpintu-backend.onrender.com"),
+      localPanel ? "http://localhost:5031" : (import.meta.env.VITE_SOCKET_URL || "https://localpintu-backend.onrender.com"),
       {
         auth: { token: session.token },
         reconnection: true,
@@ -573,7 +623,11 @@ function Shell({ session, setSession, logout }) {
     client
       .getMe()
       .then((t) => persist(t, setSession))
-      .catch(logout);
+      // Only the API interceptor logs out on a real 401.  Logging out here
+      // turned a temporary timeout/offline transition into a forced logout.
+      .catch((error) => {
+        if (error.status !== 401) showNotice("Could not refresh your profile. Your session is still active.");
+      });
 
     const socket = connectSocket();
     loadNotifs();
@@ -624,7 +678,10 @@ function Shell({ session, setSession, logout }) {
       });
     }).catch(() => {});
     syncRequestedJob();
-    const interval = setInterval(syncRequestedJob, 15000);
+    // Socket delivery is immediate; this is only a recovery path after a
+    // phone wakes or reconnects.  Avoid repeatedly loading the full job list
+    // on constrained mobile connections.
+    const interval = setInterval(syncRequestedJob, 45000);
     return () => { active = false; clearInterval(interval); };
   }, [session.token, playNotificationSound]);
 
@@ -727,10 +784,21 @@ function Shell({ session, setSession, logout }) {
   }, [locationRetry]);
 
   const setAvailability = async (status) => {
+    if (availabilityChangeRef.current || status === session.technician?.availabilityStatus) return;
+    const previous = session.technician;
+    const currentStatus = status === "Available" ? "Online" : status === "Busy" ? "Busy" : "Offline";
+    // Reflect a technician's explicit online/offline choice immediately.
+    // The request still runs in the background and the old value is restored
+    // if it cannot be saved.
+    availabilityChangeRef.current = true;
+    persist({ ...previous, availabilityStatus: status, currentStatus }, setSession);
     try {
       persist(await client.updateAvailability(status), setSession);
     } catch (e) {
+      persist(previous, setSession);
       showNotice(e.message);
+    } finally {
+      availabilityChangeRef.current = false;
     }
   };
 
@@ -821,7 +889,7 @@ function Shell({ session, setSession, logout }) {
           aria-label="Close navigation menu"
         />
       )}
-      <aside className={mobileNavOpen ? "mobile-open" : ""} aria-label="Technician navigation">
+      <aside className={mobileNavOpen ? "mobile-open" : ""} aria-label="Partner navigation">
         <button
           type="button"
           className="mobile-menu-close"
@@ -831,13 +899,15 @@ function Shell({ session, setSession, logout }) {
           <FiX />
         </button>
         <div className="brand">
-          LOCAL<span>PINTU</span>
-          <small>TECHNICIAN</small>
+          <img className="brand-logo" src="/localpintu-logo-orange.webp" alt="LocalPintu logo" />
+          <small>PARTNER</small>
         </div>
         <nav>
           {[
             ["/", FiHome, "Dashboard"],
             ["/jobs", FiBriefcase, "Jobs"],
+            ["/calendar", FiCalendar, "Calendar"],
+            ["/hubs", FiMap, "My hubs"],
             ["/wallet", FiCreditCard, "Wallet"],
             ["/expenses", FiDollarSign, "Expenses"],
             ["/profile", FiUser, "Profile"],
@@ -870,22 +940,25 @@ function Shell({ session, setSession, logout }) {
             <FiMenu />
           </button>
           <div className="technician-identity">
+            <TechnicianAvatar src={session.technician?.profileImage} name={session.technician?.fullName} />
             <p>Good day,</p>
-            <h1>{session.technician?.fullName || "Technician"}</h1>
+            <h1>{session.technician?.fullName || "Partner"}</h1>
           </div>
           <div className="header-icon-actions">
             <label className="quick-alert-language" title="Spoken request alert language">
               <span className="sr-only">Request alert language</span>
-              <select value={alertSettings.language} onChange={(event) => setAlertSettings((current) => ({ ...current, language: event.target.value }))} aria-label="Request alert language">
+              <select value={alertSettings.language} onChange={(event) => saveAlertSettings({ language: event.target.value })} aria-label="Request alert language">
                 <option value="en-IN">English</option>
                 <option value="hi-IN">हिन्दी</option>
+                <option value="hi-Latn">Hinglish</option>
               </select>
             </label>
             <button
               type="button"
               className={`alert-sound-toggle ${alertSettings.muted ? "is-muted" : ""}`}
-              onClick={() => setAlertSettings((current) => ({ ...current, muted: !current.muted }))}
+              onClick={() => saveAlertSettings({ muted: !alertSettingsRef.current.muted })}
               aria-label={alertSettings.muted ? "Unmute booking request sound" : "Mute booking request sound"}
+              aria-pressed={!alertSettings.muted}
               title={alertSettings.muted ? "Sound muted — click to unmute" : "Sound on — click to mute"}
             >
               {alertSettings.muted ? <FiVolumeX /> : <FiVolume2 />}
@@ -972,8 +1045,10 @@ function Shell({ session, setSession, logout }) {
           />
         )}
         <Routes>
-          <Route index element={<Dashboard />} />
+          <Route index element={<Dashboard technician={session.technician} setAvailability={setAvailability} />} />
           <Route path="jobs" element={<Jobs />} />
+          <Route path="calendar" element={<Calendar />} />
+          <Route path="hubs" element={<Hubs technician={session.technician} />} />
           <Route path="job/:id" element={<ActiveJob />} />
           <Route path="wallet" element={<Wallet />} />
           <Route path="expenses" element={<Expenses />} />
@@ -984,17 +1059,20 @@ function Shell({ session, setSession, logout }) {
                 technician={session.technician}
                 update={(t) => persist(t, setSession)}
                 alertSettings={alertSettings}
-                updateAlertSettings={setAlertSettings}
+                updateAlertSettings={saveAlertSettings}
+                testAlertSound={() => playNotificationSound({ voice: false, force: true })}
               />
             }
           />
         </Routes>
       </main>
 
-      <nav className="technician-bottom-nav" aria-label="Mobile technician navigation">
+      <nav className="technician-bottom-nav" aria-label="Mobile partner navigation">
         {[
           ["/", FiHome, "Home"],
           ["/jobs", FiBriefcase, "Jobs"],
+          ["/calendar", FiCalendar, "Plan"],
+          ["/hubs", FiMap, "Hubs"],
           ["/wallet", FiCreditCard, "Wallet"],
           ["/profile", FiUser, "Profile"],
         ].map(([to, Icon, label]) => (
@@ -1147,7 +1225,104 @@ const Stat = ({
   </article>
 );
 
-function Dashboard() {
+function Dashboard({ technician, setAvailability }) {
+  const [dash, setDash] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => { client.dashboard().then(setDash).catch((e) => setError(e.message)).finally(() => setLoading(false)); }, []);
+  if (loading) return <PanelSkeleton cards={4} />;
+  if (error) return <section className="panel"><EmptyState icon={FiAlertCircle} title="Home unavailable" text={error} /></section>;
+  const active = dash?.currentJob || null;
+  const upcoming = dash?.upcomingJobs || [];
+  const zone = technician?.primaryServiceArea?.name || technician?.pincode || technician?.city || "your service zone";
+  const km = active && distanceKm(technician?.currentLocation?.coordinates, active.customerLocation);
+  return <div className="dashboard-page action-home">
+    <section className="action-greeting"><div className="greeting-copy"><span>{new Date().getHours() < 12 ? "GOOD MORNING" : new Date().getHours() < 17 ? "GOOD AFTERNOON" : "GOOD EVENING"}</span><h2>{firstName(technician?.fullName)}, you are {technician?.availabilityStatus === "Available" ? "online" : "currently unavailable"}</h2><p><i /> {technician?.availabilityStatus || "Unavailable"} · {zone}</p></div><div className="greeting-profile">{technician?.profileImage ? <img src={technician.profileImage} alt={`${technician.fullName} profile`} /> : <FiUser />}<small>ADMIN VERIFIED</small></div><button className="availability-quick" onClick={() => setAvailability(technician?.availabilityStatus === "Available" ? "Unavailable" : "Available")}><FiActivity /> {technician?.availabilityStatus === "Available" ? "Go offline" : "Go online"}</button></section>
+    <section className="next-priority-card"><div className="eyebrow"><FiZap /> NEXT PRIORITY JOB</div>{active ? <><div className="priority-job-main"><div><h3>{firstName(active.customer?.name)} · {active.applianceServiceId?.title || "Service job"}</h3><p>{active.servicePlanId?.title || "Standard plan"} · {active.timeSlot || "Time to be confirmed"}</p><span>{km == null ? "Route available" : `${km.toFixed(1)} km away`} · ETA {active.technicianEtaMinutes || (km == null ? "—" : `${Math.max(8, Math.round(km * 5))} min`)}</span></div><strong>{money(jobValue(active))}</strong></div><div className="priority-actions"><a className="nav-btn" href={mapsLink(active)} target="_blank" rel="noreferrer"><FiNavigation /> Start navigation</a><NavLink className="secondary route-link" to={`/job/${active._id}`}>View job <FiChevronRight /></NavLink></div></> : <EmptyState icon={FiBriefcase} title="No priority job right now" text="Stay online and share live location to receive nearby work." />}</section>
+    <section className="today-strip"><div><small>TODAY</small><strong>{dash?.completedToday || 0} completed</strong></div><div><small>EARNED</small><strong>{money(dash?.todayEarnings)}</strong></div><div><small>PENDING</small><strong>{money(dash?.pendingEarnings)}</strong></div></section>
+    <section className="smart-actions"><div className="section-heading"><div><span>SMART ACTIONS</span><h2>Keep your day moving</h2></div></div><div className="smart-action-grid"><button onClick={() => setAvailability("Available")}><FiCheckCircle /> Go online</button><button onClick={() => setAvailability("Unavailable")}><FiClock /> Availability</button><NavLink to="/jobs"><FiMap /> My route</NavLink></div></section>
+    <section className="home-two-col"><article className="panel"><div className="section-heading"><div><span>UPCOMING</span><h2>Today’s schedule</h2></div><NavLink to="/jobs">All jobs</NavLink></div>{upcoming.length ? upcoming.map((job) => <NavLink className="upcoming-item" to={`/job/${job._id}`} key={job._id}><span><FiClock /></span><div><strong>{job.timeSlot || new Date(job.bookingDate).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</strong><small>{job.applianceServiceId?.title || "Service job"} · {firstName(job.customer?.name)}</small></div><FiChevronRight /></NavLink>) : <p className="muted-copy">No more assigned jobs today.</p>}</article><article className="panel status-summary"><span>YOUR STATUS</span><div><strong><FiStar /> {Number(dash?.rating || 0).toFixed(1)}</strong><strong>{Math.round(dash?.acceptanceRate || 0)}% acceptance</strong></div><p>{(dash?.rating || 0) >= 4.5 ? "Gold tier" : "Keep completing great work to reach Gold tier"}</p></article></section>
+  </div>;
+}
+
+function Calendar() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  useEffect(() => { client.schedule().then(setData).catch((requestError) => setError(requestError.message)); }, []);
+  if (!data && !error) return <PanelSkeleton cards={4} />;
+  const plan = data?.schedule || {};
+  const weekdays = ["S", "M", "T", "W", "T", "F", "S"];
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const gridStart = new Date(first); gridStart.setDate(first.getDate() - first.getDay());
+  const dates = Array.from({ length: 42 }, (_, index) => { const date = new Date(gridStart); date.setDate(gridStart.getDate() + index); return date; });
+  const statusFor = (date) => {
+    const key = date.toDateString();
+    const jobs = (data?.jobs || []).filter((job) => new Date(job.bookingDate).toDateString() === key);
+    const leave = (data?.leaves || []).find((item) => item.status === "Approved" && new Date(item.startDate) <= date && new Date(item.endDate) >= date);
+    const weeklyOff = (plan.recurringWeeklyOff || []).includes(date.getDay());
+    return { jobs, state: leave ? "leave" : jobs.length ? "booked" : weeklyOff ? "off" : "available" };
+  };
+  const currentDates = dates.filter((date) => date.getMonth() === month.getMonth());
+  const offDays = currentDates.filter((date) => statusFor(date).state === "off").length;
+  const availableDays = currentDates.filter((date) => statusFor(date).state === "available").length;
+  return <div className="partner-planning-page">
+    <section className="partner-month-card">
+      <header className="partner-month-top"><button type="button" onClick={() => history.back()} aria-label="Go back"><FiChevronLeft /></button><span>Work calendar</span><button type="button" onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>Today</button></header>
+      <div className="partner-month-switch"><button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} aria-label="Previous month"><FiChevronLeft /></button><h2>{month.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</h2><button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} aria-label="Next month"><FiChevronRight /></button></div>
+      <div className="partner-weekdays">{weekdays.map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
+      <div className="partner-month-grid">{dates.map((date) => { const status = statusFor(date); const outside = date.getMonth() !== month.getMonth(); const today = date.toDateString() === new Date().toDateString(); return <article key={date.toISOString()} data-state={status.state} className={`${outside ? "is-outside" : ""} ${today ? "is-today" : ""}`}><strong>{date.getDate()}</strong><span>{status.state === "booked" ? <FiClock /> : status.state === "available" ? <FiCheck /> : <FiX />}</span>{status.jobs.length > 1 ? <small>{status.jobs.length}</small> : null}</article>; })}</div>
+      <button type="button" className="calendar-disclosure" onClick={() => setGlossaryOpen((value) => !value)}>Glossary <FiChevronRight className={glossaryOpen ? "is-open" : ""} /></button>
+      {glossaryOpen && <div className="calendar-glossary"><span><i data-state="available"><FiCheck /></i>Available</span><span><i data-state="booked"><FiClock /></i>Booked</span><span><i data-state="off"><FiX /></i>Weekly off</span><span><i data-state="leave"><FiX /></i>Leave</span></div>}
+      <div className="break-balance"><span>Monthly availability</span><div><strong>{offDays}<small>Weekly break days</small></strong><strong>{availableDays}<small>Available work days</small></strong></div></div>
+      <div className="calendar-primary-actions"><a href="#work-plan">Manage work plan</a><a href="#leave-history">View history</a></div>
+    </section>
+    {error ? <p className="error">{error}</p> : null}
+    <details className="planning-settings" id="work-plan"><summary>Work plan, breaks and leave <FiChevronRight /></summary><LegacyCalendar /></details>
+  </div>;
+}
+
+function LegacyCalendar() {
+  const [data, setData] = useState(null); const [error, setError] = useState(""); const [message, setMessage] = useState("");
+  const [plan, setPlan] = useState({ shiftStart: "09:00", shiftEnd: "18:00", halfDay: "None", recurringWeeklyOff: [], peakHoursOptIn: false });
+  const [leave, setLeave] = useState({ startDate: "", endDate: "", leaveType: "Leave", reason: "" });
+  const load = () => client.schedule().then((result) => { setData(result); setPlan((current) => ({ ...current, ...(result.schedule || {}) })); }).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+  const savePlan = async (event) => { event.preventDefault(); try { await client.updateSchedule(plan); setMessage("Weekly work plan saved."); load(); } catch (e) { setMessage(e.message); } };
+  const submitLeave = async (event) => { event.preventDefault(); try { const result = await client.requestLeave(leave); setMessage(result.message); setLeave({ startDate: "", endDate: "", leaveType: "Leave", reason: "" }); load(); } catch (e) { setMessage(e.message); } };
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  if (!data && !error) return <PanelSkeleton cards={4} />;
+  return <div className="calendar-page"><section className="panel"><div className="section-heading"><div><span>WEEKLY WORK PLAN</span><h2>Availability & calendar</h2></div><button className="icon-button" onClick={load}><FiRefreshCw /></button></div><p className="muted-copy">Available, booked and leave periods automatically protect your work plan from new assignments.</p><form className="schedule-form" onSubmit={savePlan}><label>Shift starts<input type="time" value={plan.shiftStart} onChange={(e) => setPlan({ ...plan, shiftStart: e.target.value })} /></label><label>Shift ends<input type="time" value={plan.shiftEnd} onChange={(e) => setPlan({ ...plan, shiftEnd: e.target.value })} /></label><label>Half-day break<select value={plan.halfDay} onChange={(e) => setPlan({ ...plan, halfDay: e.target.value })}><option>None</option><option>Morning</option><option>Afternoon</option></select></label><label className="peak-toggle"><input type="checkbox" checked={Boolean(plan.peakHoursOptIn)} onChange={(e) => setPlan({ ...plan, peakHoursOptIn: e.target.checked })} /> Work 6–9 PM · unlock 1.15× incentive</label><div className="week-off-row"><span>Recurring weekly off</span>{days.map((day, index) => <label key={day}><input type="checkbox" checked={(plan.recurringWeeklyOff || []).includes(index)} onChange={() => setPlan({ ...plan, recurringWeeklyOff: (plan.recurringWeeklyOff || []).includes(index) ? plan.recurringWeeklyOff.filter((value) => value !== index) : [...(plan.recurringWeeklyOff || []), index] })} /> {day}</label>)}</div><button>Save work plan</button></form></section>
+    {data?.recommendation && <section className="route-recommendation"><FiNavigation /><div><span>SMART ROUTE FOR TOMORROW</span><strong>You have {data.recommendation.jobCount} jobs across {data.recommendation.routeKm} km.</strong><p>Suggested start: {data.recommendation.suggestedStartTime}. Route can save approximately {data.recommendation.estimatedMinutesSaved} minutes.</p></div></section>}
+    <section className="calendar-grid">{Array.from({ length: 7 }, (_, offset) => { const date = new Date(); date.setDate(date.getDate() + offset); const key = date.toDateString(); const jobs = (data?.jobs || []).filter((job) => new Date(job.bookingDate).toDateString() === key); const leaveState = (data?.leaves || []).find((item) => item.status === "Approved" && new Date(item.startDate) <= date && new Date(item.endDate) >= date); const weeklyOff = (plan.recurringWeeklyOff || []).includes(date.getDay()); const unavailable = weeklyOff || plan.halfDay !== "None"; const state = leaveState ? (leaveState.leaveType === "Emergency Leave" ? "emergency" : "leave") : jobs.length ? "booked" : unavailable ? "unavailable" : "available"; return <article className="day-plan" key={key} data-state={state}><span>{date.toLocaleDateString("en-IN", { weekday: "short" })}</span><strong>{date.getDate()}</strong><small>{leaveState ? leaveState.leaveType : jobs.length ? `${jobs.length} booked job${jobs.length > 1 ? "s" : ""}` : weeklyOff ? "Weekly off" : plan.halfDay !== "None" ? `${plan.halfDay} break` : "Available"}</small>{jobs.map((job) => <NavLink to={`/job/${job._id}`} key={job._id}>{job.timeSlot} · {job.applianceServiceId?.title || "Service"}</NavLink>)}{jobs.length > 1 && <em>Travel block · route buffer</em>}</article>; })}</section>
+    <section className="panel"><div className="section-heading"><div><span>TIME OFF</span><h2>Request leave</h2></div></div><form className="leave-form" onSubmit={submitLeave}><label>Start<input required type="date" min={new Date().toISOString().slice(0, 10)} value={leave.startDate} onChange={(e) => setLeave({ ...leave, startDate: e.target.value })} /></label><label>End<input required type="date" min={leave.startDate || new Date().toISOString().slice(0, 10)} value={leave.endDate} onChange={(e) => setLeave({ ...leave, endDate: e.target.value })} /></label><label>Type<select value={leave.leaveType} onChange={(e) => setLeave({ ...leave, leaveType: e.target.value })}><option>Leave</option><option>Emergency Leave</option></select></label><label className="wide">Reason<textarea required minLength="3" value={leave.reason} onChange={(e) => setLeave({ ...leave, reason: e.target.value })} /></label><button>Request leave</button></form>{message && <p className="schedule-message">{message}</p>}<div className="leave-list">{(data?.leaves || []).slice().reverse().map((item) => <div key={item._id}><strong>{item.leaveType} · {item.status}</strong><span>{new Date(item.startDate).toLocaleDateString("en-IN")} – {new Date(item.endDate).toLocaleDateString("en-IN")}</span><small>{item.reason}</small></div>)}</div></section></div>;
+}
+
+function Hubs({ technician }) {
+  const services = (technician?.skills || []).filter(Boolean);
+  const [service, setService] = useState(services[0] || "Home services");
+  const city = technician?.city || "Your city";
+  const pincode = technician?.pincode || "Pincode pending";
+  const mapQuery = encodeURIComponent([city, /^\d{6}$/.test(pincode) ? pincode : "", technician?.state || "India"].filter(Boolean).join(", "));
+  const namedAreas = [technician?.primaryServiceArea, ...(technician?.secondaryServiceAreas || [])]
+    .map((area) => typeof area === "object" ? area?.name : "")
+    .filter(Boolean);
+  const hubs = namedAreas.length ? namedAreas : [`${city} · ${pincode}`];
+  const isAvailable = technician?.availabilityStatus === "Available" || technician?.isAvailable === true;
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
+  return <div className="partner-hubs-page"><section className="hub-shell">
+    <header><div><span>MY SERVICE NETWORK</span><h2>My hubs</h2></div><label><span className="sr-only">Service</span><select value={service} onChange={(event) => setService(event.target.value)}>{(services.length ? services : ["Home services"]).map((item) => <option key={item}>{item}</option>)}</select></label></header>
+    <div className="hub-tabs">{hubs.map((hub, index) => <button type="button" className={index === 0 ? "active" : ""} key={hub}>{hub}</button>)}</div>
+    <div className="hub-status-row"><span className={isAvailable ? "is-live" : "is-paused"}><i />{isAvailable ? "Available for leads" : "Lead matching paused"}</span><strong>{hubs.length} coverage {hubs.length === 1 ? "area" : "areas"}</strong></div>
+    <div className="hub-map hub-real-map"><iframe title={`Service coverage map for ${city} ${pincode}`} src={`https://www.google.com/maps?q=${mapQuery}&z=13&output=embed`} loading="eager" referrerPolicy="no-referrer-when-downgrade" allowFullScreen/><div className="hub-map-label"><small>ACTIVE COVERAGE</small><strong>{city}</strong><span>{pincode} · {service}</span></div><a className="hub-open-map" href={mapsUrl} target="_blank" rel="noreferrer"><FiNavigation/>Open full map</a></div>
+    <div className="hub-summary"><article><FiMapPin/><div><small>Primary city</small><strong>{city}</strong></div></article><article><FiNavigation/><div><small>Active pincode</small><strong>{pincode}</strong></div></article><article><FiBriefcase/><div><small>Service</small><strong>{service}</strong></div></article></div>
+    <section className="hub-match-flow"><span>HOW LEADS REACH YOU</span><div><article><b>1</b><strong>Customer location</strong><small>Booking pincode is checked.</small></article><article><b>2</b><strong>Skill match</strong><small>{service} is matched to your profile.</small></article><article><b>3</b><strong>Live request</strong><small>You receive the request when available.</small></article></div></section>
+    <section className="hub-help"><span>NEED HELP?</span><h3>Understanding your hub</h3><details><summary>What is a hub?<FiChevronRight/></summary><p>Your hub is the city and pincode coverage configured for your profile. Matching jobs from this service network can reach you when you are available.</p></details><details><summary>Why am I receiving leads outside my hub?<FiChevronRight/></summary><p>Nearby jobs may appear when your assigned area overlaps another active pincode or when admin dispatches a suitable job manually.</p></details><details><summary>How can I change my coverage?<FiChevronRight/></summary><p>Update your city and pincode in Profile. Admin assigned areas continue to appear here automatically.</p></details></section>
+  </section></div>;
+}
+
+function LegacyDashboard() {
   const [jobs, setJobs] = useState([]);
   const [dash, setDash] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1373,6 +1548,7 @@ function Dashboard() {
 function Jobs() {
   const [jobs, setJobs] = useState([]);
   const [error, setError] = useState("");
+  const [tab, setTab] = useState("Today");
   const [otp, setOtp] = useState({});
   const [notes, setNotes] = useState({});
   const [loading, setLoading] = useState(true);;
@@ -1392,14 +1568,6 @@ function Jobs() {
   const act = async (job, action, payload = {}) => {
     try {
       await client.jobAction(job._id, action, payload);
-      load();
-    } catch (e) {
-      alert(e.message);
-    }
-  };
-  const requestComp = async (job) => {
-    try {
-      const result = await client.requestCompletion(job._id);
       load();
     } catch (e) {
       alert(e.message);
@@ -1437,6 +1605,20 @@ function Jobs() {
       .then(() => alert("Phone number copied!"))
       .catch(() => {});
   };
+  const reportLate = async (job) => {
+    const newEtaMinutes = Number(window.prompt("New ETA in minutes", String(job.technicianEtaMinutes || 20)));
+    if (!newEtaMinutes) return;
+    const reason = window.prompt("Reason for the delay (shared with customer)");
+    if (!reason) return;
+    await act(job, "late", { newEtaMinutes, reason });
+  };
+  const requestSupport = async (job) => {
+    const category = window.prompt("Support type: Customer, Payment, Parts, Safety, Technical or Other", "Other") || "Other";
+    const message = window.prompt("Describe what you need help with");
+    if (!message) return;
+    await act(job, "support", { category, message });
+    alert("Support request sent to LocalPintu operations.");
+  };
   if (loading) return <PanelSkeleton cards={5} />;
   if (error) return <section className="panel"><EmptyState title="Jobs could not be loaded" text={error} /></section>;
   if (jobs.length === 0)
@@ -1448,10 +1630,22 @@ function Jobs() {
         />
       </section>
     );
+  const isToday = (job) => new Date(job.bookingDate).toDateString() === new Date().toDateString();
+  const tabDefinitions = [
+    ["New requests", (job) => job.technicianAssignmentStatus === "Requested"],
+    ["Today", (job) => isToday(job) && !["Completed", "Cancelled"].includes(job.status)],
+    ["In progress", (job) => ["In Progress", "Paused", "Waiting For OTP Verification"].includes(job.status)],
+    ["Follow-up", (job) => job.status === "Paused" || Boolean(job.technicianLateNotice?.notifiedAt) || (job.supportRequests || []).some((request) => request.status === "Open")],
+    ["Completed", (job) => job.status === "Completed"],
+    ["Cancelled", (job) => job.status === "Cancelled"],
+  ];
+  const visibleJobs = jobs.filter(tabDefinitions.find(([name]) => name === tab)?.[1] || (() => true));
   return (
     <section className="panel">
-      <h2>My jobs ({jobs.length})</h2>
-      {jobs.map((j) => {
+      <div className="section-heading"><div><span>MY WORK</span><h2>Jobs ({visibleJobs.length})</h2></div><button className="icon-button" onClick={load} title="Refresh jobs"><FiRefreshCw /></button></div>
+      <div className="job-tabs" role="tablist" aria-label="Filter jobs">{tabDefinitions.map(([name, predicate]) => <button key={name} role="tab" aria-selected={tab === name} className={tab === name ? "active" : ""} onClick={() => setTab(name)}>{name}<b>{jobs.filter(predicate).length}</b></button>)}</div>
+      {visibleJobs.length === 0 ? <EmptyState title={`No ${tab.toLowerCase()} jobs`} text="New work and updates will appear here." /> : visibleJobs.map((j) => {
+        const payment = paymentDetails(j);
         const showPhone =
           j.technicianAssignmentStatus === "Accepted" ||
           !["Requested", null].includes(j.technicianAssignmentStatus);
@@ -1489,9 +1683,14 @@ function Jobs() {
                   )}
                 </span>
               </div>
-              <p>
-                {j.applianceServiceId?.title} - {j.servicePlanId?.title}
-              </p>
+              <p>{firstName(j.customer?.name)} · {j.applianceServiceId?.title} - {j.servicePlanId?.title}</p>
+              <div className="job-operation-row"><span data-urgency={j.urgency || "Normal"}><FiZap /> {j.urgency || "Normal"}</span><span><FiMapPin /> {Number.isFinite(Number(j.distanceMeters)) ? `${(Number(j.distanceMeters) / 1000).toFixed(1)} km · ` : ""}{j.technicianEtaMinutes ? `ETA ${j.technicianEtaMinutes} min` : j.timeSlot}</span><span>Expected earning {money(jobValue(j))}</span></div>
+              <div className={`job-payment ${payment.paid ? "is-paid" : "is-due"}`}>
+                <FiCreditCard />
+                <span>{payment.paid ? "Paid online" : (/cash|cod/i.test(j.paymentMethod || "") ? `Collect ${money(jobValue(j))} cash` : "Payment pending")}</span>
+              </div>
+              {j.customer?.problemDescription && <p className="issue-summary"><FiInfo /> {j.customer.problemDescription}</p>}
+              {(j.requiredTools?.length || j.sparePartsHint) && <p className="tools-hint"><FiTool /> {j.requiredTools?.join(", ") || "Tools to confirm"}{j.sparePartsHint ? ` · Parts: ${j.sparePartsHint}` : ""}</p>}
               <small>{j.customer?.address}</small>
               {j.customer?.mobileNumber && showPhone && (
                 <div className="customer-phone">
@@ -1521,6 +1720,7 @@ function Jobs() {
                   <FiNavigation /> Open location
                 </a>
               )}
+              {showPhone && j.customer?.mobileNumber && <a className="call-btn" href={`https://wa.me/91${String(j.customer.mobileNumber).replace(/\D/g, "").replace(/^91/, "")}`} target="_blank" rel="noreferrer" title="WhatsApp customer"><FiMessageCircle /></a>}
               {isRequested && (
                 <>
                   <button className="secondary" onClick={() => act(j, "hold")}>
@@ -1553,14 +1753,8 @@ function Jobs() {
               )}
               {isInProgress && (
                 <>
-                  <button className="secondary" onClick={() => act(j, "pause")}>
-                    Pause
-                  </button>
-                  {j.beforePhotos?.length > 0 && j.afterPhotos?.length > 0 && (
-                    <button className="primary" onClick={() => requestComp(j)}>
-                      DONE
-                    </button>
-                  )}
+                  <NavLink className="secondary" to={`/job/${j._id}#job-pause`}>Pause with reason</NavLink>
+                  <NavLink className="primary route-link" to={`/job/${j._id}`}>Open completion <FiChevronRight /></NavLink>
                 </>
               )}
               {
@@ -1597,16 +1791,7 @@ function Jobs() {
                 <button onClick={() => act(j, "resume")}>Resume</button>
               )}
               {isActive && !isRequested && !isWaitingConfirm && (
-                <button
-                  className="danger"
-                  onClick={() =>
-                    act(j, "cancel", {
-                      reason: window.prompt("Cancellation reason") || "",
-                    })
-                  }
-                >
-                  Cancel
-                </button>
+                <><button className="secondary" onClick={() => reportLate(j)}><FiClock /> I will be late</button><button className="secondary" onClick={() => requestSupport(j)}><FiLifeBuoy /> Need support</button><button className="danger" onClick={() => act(j, "cancel", { reason: window.prompt("Cancellation reason") || "" })}>Cancel</button></>
               )}
             </div>
             {canUploadPhotos && (
@@ -1687,16 +1872,18 @@ function Wallet() {
   if (loading) return <PanelSkeleton cards={4} />;
   if (error) return <section className="panel"><EmptyState title="Wallet could not be loaded" text={error} /></section>;
   return (
-    <>
-      <section className="stats">
+    <div className="wallet-page-premium">
+      <header className="wallet-page-title"><div><span>PARTNER FINANCE</span><h2>Wallet & credits</h2><p>Track earnings, lead credits and settlements in one place.</p></div><FiCreditCard /></header>
+      <section className="stats wallet-balance-stats">
         <Stat label="Available" value={money(data?.wallet?.balance)} />
         <Stat
           label="Pending settlement"
           value={money(data?.wallet?.pendingAmount)}
         />
       </section>
-      <section className="panel">
-        <h2>Withdraw funds</h2>
+      <CreditWallet />
+      <section className="panel wallet-withdraw-panel">
+        <div className="wallet-section-title"><div><span>EARNINGS</span><h2>Withdraw funds</h2><p>Transfer available earnings to your registered payout account.</p></div><FiSend /></div>
         <form className="grid-form" onSubmit={withdraw}>
           <input
             required
@@ -1710,9 +1897,9 @@ function Wallet() {
         </form>
         {message && <p>{message}</p>}
       </section>
-      <section className="panel">
-        <h2>Transaction history</h2>
-        {data?.transactions?.map((x) => (
+      <section className="panel wallet-transaction-panel">
+        <div className="wallet-section-title"><div><span>ACTIVITY</span><h2>Transaction history</h2></div><FiActivity /></div>
+        {data?.transactions?.length ? data.transactions.map((x) => (
           <div className="job" key={x._id}>
             <strong>{x.type}</strong>
             <span>
@@ -1720,10 +1907,33 @@ function Wallet() {
               {x.rejectionReason ? ` - ${x.rejectionReason}` : ""}
             </span>
           </div>
-        ))}
+        )) : <p className="wallet-empty-state">No earnings transactions yet.</p>}
       </section>
-    </>
+    </div>
   );
+}
+
+const razorpayReady = () => new Promise((resolve, reject) => {
+  if (window.Razorpay) return resolve();
+  const script = document.createElement("script"); script.src = "https://checkout.razorpay.com/v1/checkout.js"; script.async = true; script.onload = resolve; script.onerror = () => reject(new Error("Razorpay could not load.")); document.head.appendChild(script);
+});
+function CreditWallet() {
+  const [data, setData] = useState(null); const [leads, setLeads] = useState([]); const [error, setError] = useState(""); const [busy, setBusy] = useState("");
+  const load = useCallback(async () => { try { const [walletData, leadData] = await Promise.all([client.creditWallet(), client.creditLeads()]); setData(walletData); setLeads(leadData); setError(""); } catch (requestError) { setError(requestError.message || "Could not load credits."); } }, []);
+  useEffect(() => { load(); }, [load]);
+  const buy = async (pkg) => { try { setBusy(`buy-${pkg._id}`); const order = await client.createCreditRazorpayOrder(pkg._id); await razorpayReady(); new window.Razorpay({ key: order.key, amount: order.amount, currency: order.currency, name: "LocalPintu Credits", description: `${pkg.credits} lead credits`, order_id: order.orderId, theme: { color: "#50345c" }, handler: async (response) => { try { await client.verifyCreditRazorpayPayment({ paymentId: order.paymentId, ...response }); toast.success(`${pkg.credits} credits added securely.`); load(); } catch (verificationError) { toast.error(verificationError.message || "Payment verification is pending."); } finally { setBusy(""); } }, modal: { ondismiss: () => setBusy("") } }).open(); } catch (requestError) { toast.error(requestError.message || "Could not start credit payment."); setBusy(""); } };
+  const unlock = async (lead) => { try { setBusy(`lead-${lead._id}`); const result = await client.unlockCreditLead(lead._id); toast.success(`Lead unlocked. ${result.balance} credits remain.`); load(); } catch (requestError) { toast.error(requestError.message); } finally { setBusy(""); } };
+  if (!data?.wallet?.creditSystemEnabled) return <section className="credit-wallet credit-wallet-disabled"><div className="credit-disabled-icon"><FiCreditCard /></div><div><span>LOCALPINTU CREDITS</span><h2>Credit leads are not active yet</h2><p>Your account is currently on direct job assignment, so no credit pack is needed. Ask your admin to enable Credit-Based Lead System if you want to receive paid unlockable leads here.</p></div><span className="credit-disabled-status"><FiCheckCircle /> Direct assignment active</span></section>;
+  const availableLeads = leads.filter((lead) => lead.status === "Available");
+  return <section className="panel credit-wallet-panel">
+    <div className="credit-wallet-head"><div><span>LOCALPINTU CREDITS</span><h2>Lead wallet</h2><p>Use credits only when you choose to unlock a matched service lead. Your earnings remain separate and protected.</p><div className="credit-wallet-pills"><small><FiShield /> Secure payments</small><small><FiZap /> Instant credit update</small></div></div><strong>{Number(data.wallet.balance || 0)} <small>credits available</small></strong></div>
+    {error && <p className="credit-wallet-error">{error}</p>}
+    <div className="credit-secure-strip"><FiShield /><span><strong>Secure credit checkout</strong><small>UPI · PhonePe · Google Pay · Paytm · Cards · Netbanking</small></span></div>
+    {(data.packages || []).length ? <div className="credit-package-grid">{data.packages.map((pkg) => <article key={pkg._id}><small>CREDIT PACK</small><strong>{pkg.credits} credits</strong><span>{money(pkg.price)}</span><button onClick={() => buy(pkg)} disabled={busy === `buy-${pkg._id}`}>{busy === `buy-${pkg._id}` ? "Opening checkout…" : "Buy securely"}</button></article>)}</div> : <div className="credit-pack-empty"><FiCreditCard /><div><strong>No credit packs available</strong><span>Admin can publish credit packs when paid leads are enabled.</span></div></div>}
+    <div className="credit-lead-heading"><div><span>AVAILABLE LEADS</span><h3>Matched service requests</h3><p>{availableLeads.length} lead{availableLeads.length === 1 ? "" : "s"} ready to review</p></div><button className="secondary" onClick={load}><FiRefreshCw /> Refresh</button></div>
+    {availableLeads.length ? <div className="credit-lead-list">{availableLeads.map((lead) => <article key={lead._id}><div><strong>{lead.bookingId?.childServiceId?.title || lead.bookingId?.applianceServiceId?.title || "Service request"}</strong><span>{lead.bookingId?.bookingDate ? new Date(lead.bookingId.bookingDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "New request"} · {lead.bookingId?.timeSlot || "Time to be confirmed"}</span><small>Unlock to view customer contact and exact address.</small></div><aside><b>{lead.creditCost} credits</b><button onClick={() => unlock(lead)} disabled={busy === `lead-${lead._id}`}>{busy === `lead-${lead._id}` ? "Unlocking…" : "Unlock lead"}</button></aside></article>)}</div> : <p className="credit-empty"><FiCheckCircle /> You are all caught up. New matched leads will appear here.</p>}
+    <h3 className="credit-history-title">Credit history</h3><div className="credit-history">{(data.transactions || []).length ? data.transactions.slice(0, 8).map((transaction) => <div key={transaction._id}><span><strong>{transaction.type}</strong><small>{new Date(transaction.createdAt).toLocaleString("en-IN")}{transaction.bookingId?.bookingNumber ? ` · ${transaction.bookingId.bookingNumber}` : ""}</small></span><b className={transaction.direction === "Credit" ? "is-credit" : "is-debit"}>{transaction.direction === "Credit" ? "+" : "−"}{transaction.credits}</b></div>) : <p className="wallet-empty-state">Credit activity will appear here.</p>}</div>
+  </section>;
 }
 
 function Expenses() {
@@ -1835,9 +2045,10 @@ function Expenses() {
   );
 }
 
-function Profile({ technician, update, alertSettings, updateAlertSettings }) {
+function Profile({ technician, update, alertSettings, updateAlertSettings, testAlertSound }) {
   const [form, setForm] = useState(technician || {});
   const [message, setMessage] = useState("");
+  const [preview, setPreview] = useState(null);
   useEffect(() => setForm(technician || {}), [technician]);
   const saveProfile = async () => {
     try {
@@ -1863,19 +2074,13 @@ function Profile({ technician, update, alertSettings, updateAlertSettings }) {
   };
   const readFile = (file, key) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const documents = { ...(form.documents || {}), [key]: reader.result };
-        const next = await client.updateMe({ documents });
-        setForm(next);
-        update(next);
-        setMessage(`${key} uploaded for verification.`);
-      } catch (error) {
-        setMessage(error.message);
-      }
-    };
-    reader.readAsDataURL(file);
+    readDocumentImage(file).then(async (documentImage) => {
+      const documents = { ...(form.documents || {}), [key]: documentImage };
+      const next = await client.updateMe({ documents });
+      setForm(next);
+      update(next);
+      setMessage(`${key} uploaded and ready for verification.`);
+    }).catch((error) => setMessage(error.message));
   };
   const docs = [
     { key: "aadhaarFront", label: "Aadhaar (Front)" },
@@ -2002,13 +2207,24 @@ function Profile({ technician, update, alertSettings, updateAlertSettings }) {
       <div className="alert-preferences">
         <label>
           Spoken alert language
-          <select value={alertSettings.language} onChange={(event) => updateAlertSettings((current) => ({ ...current, language: event.target.value }))}>
+          <select value={alertSettings.language} onChange={(event) => updateAlertSettings({ language: event.target.value })}>
             <option value="en-IN">English</option>
             <option value="hi-IN">Hindi</option>
+            <option value="hi-Latn">Hinglish</option>
           </select>
         </label>
+        <label className="alert-sound-field">
+          Request sound
+          <span className="alert-sound-control"><select value={alertSettings.sound} onChange={(event) => updateAlertSettings({ sound: event.target.value })}>
+              <option value="classic-bell">Classic bell</option>
+              <option value="double-chime">Double chime</option>
+              <option value="urgent-pulse">Urgent pulse</option>
+              <option value="soft-chime">Soft chime</option>
+              <option value="ring-ring">Loud Ring Ring</option>
+            </select><button type="button" onClick={testAlertSound} title="Play selected sound" aria-label="Test selected request sound"><FiVolume2 /> Test sound</button></span>
+        </label>
         <label className="alert-mute-toggle">
-          <input type="checkbox" checked={alertSettings.muted} onChange={(event) => updateAlertSettings((current) => ({ ...current, muted: event.target.checked }))} />
+          <input type="checkbox" checked={alertSettings.muted} onChange={(event) => updateAlertSettings({ muted: event.target.checked })} />
           <span>{alertSettings.muted ? "Request sound and voice muted" : "Request sound and voice enabled"}</span>
         </label>
       </div>
@@ -2019,9 +2235,7 @@ function Profile({ technician, update, alertSettings, updateAlertSettings }) {
           <div className="document-card" key={key}>
             <strong>{label}</strong>
             {form.documents?.[key] ? (
-              <a href={form.documents[key]} target="_blank" rel="noreferrer">
-                View uploaded
-              </a>
+              <><button type="button" className="document-preview-button" onClick={() => setPreview({ src: form.documents[key], label })}><img className="document-preview" src={form.documents[key]} alt={`${label} preview`} /><span>Preview document</span></button></>
             ) : (
               <span>Not uploaded</span>
             )}
@@ -2043,8 +2257,16 @@ function Profile({ technician, update, alertSettings, updateAlertSettings }) {
           </div>
         ))}
       </div>
+      {preview ? <div className="document-lightbox" role="dialog" aria-modal="true" aria-label={`${preview.label} preview`} onClick={() => setPreview(null)}><div onClick={(event) => event.stopPropagation()}><button type="button" aria-label="Close document preview" onClick={() => setPreview(null)}><FiX /></button><strong>{preview.label}</strong><img src={preview.src} alt={preview.label} /></div></div> : null}
     </section>
   );
+}
+
+function SwipeComplete({ disabled, onComplete }) {
+  const [progress, setProgress] = useState(0); const startRef = useRef(null); const doneRef = useRef(false);
+  const move = (event) => { if (startRef.current == null) return; const width = event.currentTarget.clientWidth - 58; const next = Math.max(0, Math.min(1, (event.clientX - startRef.current) / Math.max(1, width))); setProgress(next); if (next >= .92 && !doneRef.current) { doneRef.current = true; setProgress(1); onComplete(); } };
+  const release = () => { if (!doneRef.current) setProgress(0); startRef.current = null; };
+  return <div className={`swipe-complete ${disabled ? "is-disabled" : ""}`} style={{ "--swipe-progress": progress }} onPointerDown={(event) => { if (!disabled) { startRef.current = event.clientX; event.currentTarget.setPointerCapture?.(event.pointerId); } }} onPointerMove={move} onPointerUp={release} onPointerCancel={release} role="button" tabIndex={disabled ? -1 : 0} aria-label="Slide to request customer OTP"><span><FiSend /></span><strong>{disabled ? "Requesting OTP…" : "Slide to request customer OTP"}</strong><FiChevronRight /></div>;
 }
 
 function ActiveJob() {
@@ -2053,13 +2275,12 @@ function ActiveJob() {
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [otpVal, setOtpVal] = useState("");
-  const [slideComplete, setSlideComplete] = useState(false);
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [now, setNow] = useState(() => Date.now());
 
   const load = () => {
-    client
+    return client
       .job(id)
       .then((item) => {
         setJob(item);
@@ -2087,6 +2308,10 @@ function ActiveJob() {
       load();
     } catch (requestError) {
       setError(requestError.message);
+      // A completion OTP can be created but rejected by the SMS provider.
+      // Reload to show the Waiting for OTP state and its retry action instead
+      // of leaving the technician on an out-of-date In Progress screen.
+      load();
     } finally {
       setBusyAction("");
     }
@@ -2108,6 +2333,7 @@ function ActiveJob() {
   const isWaiting = job.status === "Waiting For OTP Verification";
   const isCompleted = job.status === "Completed";
   const isPaused = job.status === "Paused";
+  const payment = paymentDetails(job);
   const customerDestination = Number.isFinite(Number(job.customerLocation?.latitude)) && Number.isFinite(Number(job.customerLocation?.longitude))
     ? `${job.customerLocation.latitude},${job.customerLocation.longitude}`
     : String(job.customer?.address || "").trim();
@@ -2117,8 +2343,7 @@ function ActiveJob() {
   const canUploadPhotos = ["Assigned", "In Progress", "Paused"].includes(
     job.status,
   );
-  const hasRequiredPhotos =
-    job.beforePhotos?.length > 0 && job.afterPhotos?.length > 0;
+  const hasRequiredPhotos = Boolean(job.technicianCompletionPhoto);
   const otpRemaining = job.completionOtpExpiresAt
     ? Math.max(0, new Date(job.completionOtpExpiresAt).getTime() - now)
     : 0;
@@ -2129,7 +2354,7 @@ function ActiveJob() {
     .padStart(2, "0")}`;
   const timeline = [
     ["Booking created", job.createdAt, true],
-    ["Technician assigned", job.assignedAt, Boolean(job.assignedAt)],
+    ["Partner assigned", job.assignedAt, Boolean(job.assignedAt)],
     [
       "Job accepted",
       job.startedAt,
@@ -2141,14 +2366,14 @@ function ActiveJob() {
       ].includes(job.status),
     ],
     ["Service started", job.startedAt, Boolean(job.startedAt)],
-    ["Before images uploaded", null, Boolean(job.beforePhotos?.length)],
-    ["After images uploaded", null, Boolean(job.afterPhotos?.length)],
+    ["Partner completion selfie", null, Boolean(job.technicianCompletionPhoto)],
     ["Waiting for OTP", job.completionOtpRequestedAt, isWaiting || isCompleted],
     ["Job completed", job.completedAt, isCompleted],
   ];
   const uploadPhotos = async (field, files) => {
     try {
-      await act("photos", { [field]: await readJobPhotos(files) });
+      const photos = await readJobPhotos(files);
+      await act("photos", field === "technicianCompletionPhoto" ? { technicianCompletionPhoto: photos[0] } : { [field]: photos });
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -2229,6 +2454,18 @@ function ActiveJob() {
                 )}
               </span>
             </article>
+            <article className={`job-detail-card payment-card ${payment.paid ? "is-paid" : "is-due"}`}>
+              <div className="card-title">
+                <span><FiCreditCard /></span>
+                <div>
+                  <small>PAYMENT</small>
+                  <h3>{payment.paid ? "Payment received" : "Payment to collect"}</h3>
+                </div>
+              </div>
+              <strong>{payment.paid ? "Already paid" : "Cash due after service"}</strong>
+              <p>{payment.method}</p>
+              <span className="service-price">{money(Math.max(0, jobValue(job) - (payment.paid ? 0 : Number(job.amountPreviouslyPaid || 0))))}</span>
+            </article>
             <article className="job-detail-card address-card">
               <div className="card-title">
                 <span>
@@ -2272,7 +2509,7 @@ function ActiveJob() {
                   "No additional details were provided."}
               </p>
               <label className="notes-field">
-                <span>Technician notes</span>
+                <span>Partner notes</span>
                 <textarea
                   defaultValue={job.jobNotes || ""}
                   placeholder="Add service notes…"
@@ -2284,7 +2521,8 @@ function ActiveJob() {
             </article>
           </section>
 
-          <section className="job-section images-section">
+          <JobWork key={job._id} job={job} onChanged={load} />
+          {false && <section className="job-section images-section">
             <div className="section-heading">
               <div>
                 <span>WORK PROOF</span>
@@ -2356,6 +2594,11 @@ function ActiveJob() {
                 </article>
               ))}
             </div>
+          </section>}
+
+          <section className="job-section completion-proof-card">
+            <div className="section-heading"><div><span>FINAL VERIFICATION</span><h2>Partner completion selfie</h2><p>Your verified profile photo cannot be changed. Capture a fresh selfie at the service location to close this job.</p></div>{job.technicianCompletionPhoto && <span className="upload-success"><FiCheck /> Captured</span>}</div>
+            {job.technicianCompletionPhoto ? <img className="completion-selfie" src={job.technicianCompletionPhoto} alt="Partner completion selfie" /> : canUploadPhotos ? <label className="completion-selfie-capture"><FiUser /><strong>Capture completion selfie</strong><span>Use camera or choose one clear photo</span><input type="file" accept="image/*" capture="user" onChange={(event) => uploadPhotos("technicianCompletionPhoto", event.target.files)} /></label> : <p className="muted-copy">Start the job to capture your completion selfie.</p>}
           </section>
 
           {isWaiting && (
@@ -2484,7 +2727,7 @@ function ActiveJob() {
                 ? "Start this assigned job to continue the completion workflow."
                 : hasRequiredPhotos
                   ? "All required images have been saved."
-                  : "Before and after photos are required."}
+                  : "Completion selfie is required."}
             </small>
           </div>
           <div>
@@ -2506,32 +2749,13 @@ function ActiveJob() {
             ) : (
               <button
                 className="secondary"
-                onClick={() => act("pause")}
+                onClick={() => document.getElementById("job-pause")?.scrollIntoView({ behavior: "smooth" })}
                 disabled={busyAction === "pause"}
               >
                 <FiClock /> Pause
               </button>
             )}
-            {isInProgress && hasRequiredPhotos && (
-              <button
-                className="complete-action"
-                onClick={() => {
-                  if (!slideComplete) {
-                    setSlideComplete(true);
-                    setTimeout(() => {
-                      act("done");
-                      setSlideComplete(false);
-                    }, 400);
-                  }
-                }}
-                disabled={busyAction === "done"}
-              >
-                <FiSend />{" "}
-                {slideComplete || busyAction === "done"
-                  ? "Requesting OTP…"
-                  : "Complete job"}
-              </button>
-            )}
+            {isInProgress && hasRequiredPhotos && <SwipeComplete disabled={busyAction === "done"} onComplete={() => act("done")} />}
             <button
               className="danger outline-danger"
               onClick={() => {

@@ -1,0 +1,6 @@
+.day-plan[data-state="available"] { border-color: #b9e8cb; background: #f2fff6; }
+.day-plan[data-state="unavailable"] { border-color: #d9d4cf; background: #f5f4f2; }
+.day-plan[data-state="booked"] { border-color: #b9d7ff; background: #f5faff; }
+.day-plan[data-state="leave"] { border-color: #f3c8c8; background: #fff5f5; }
+.day-plan[data-state="emergency"] { border-color: #e5a4a4; background: #ffe8e8; }
+.day-plan em { padding-top: 4px; color: #9a714c; font-size: 10px; font-style: normal; font-weight: 700; }
